@@ -1,0 +1,8 @@
+{
+  "baseBranch": "base",
+  "uatBranch": "uat",
+  "preBranch": "pre",
+  "proBranch": "pro",
+  "remoteName": "origin",
+  "cycleWeeks": 2
+}
