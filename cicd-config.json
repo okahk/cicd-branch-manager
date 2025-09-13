@@ -4,5 +4,8 @@
   "preBranch": "pre",
   "proBranch": "pro",
   "remoteName": "origin",
-  "cycleWeeks": 2
+  "cycleWeeks": 2,
+  "branchPrefix": "",
+  "autoRemoveBranches": false,
+  "branchRetentionCycles": 3
 }

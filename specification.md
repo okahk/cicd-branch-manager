@@ -4,13 +4,28 @@
 
 The CI/CD Branch Management Tool is a Node.js command-line application designed to automate a Git-based branching and merging strategy following a strict two-week release cycle. The tool manages code promotion through four environment stages (base → UAT → pre-production → production) with date-based branch naming.
 
+### Installation Options
+
+The tool supports two installation methods:
+
+1. **Global Installation** (Recommended): Install globally via npm to use the `git-cicd` command from anywhere:
+   ```bash
+   npm install -g git+https://github.com/your-username/cicd-branch-manager.git
+   ```
+
+2. **Local Installation**: Clone and install locally for development or testing:
+   ```bash
+   git clone <repository-url>
+   npm install
+   ```
+
 ## 2. Purpose
 
 This tool automates the repetitive branching and merging tasks in a structured release cycle, ensuring consistency, reducing human error, and maintaining a predictable deployment schedule.
 
 ## 3. Command-Line Interface (CLI)
 
-The tool is operated via the following commands and options:
+The tool is operated via the `git-cicd` command (global installation) or `node cicd-branch-tool.js` (local installation) with the following options:
 
 -   `--run`: Executes the full branch promotion workflow, making live changes to the repository.
 -   `--dry-run`: Simulates the workflow without making any actual changes, providing a preview of the actions that would be taken.
@@ -20,6 +35,22 @@ The tool is operated via the following commands and options:
 -   `--git <dir>`: Sets the path to the Git repository directory.
 -   `--status <file>`: Enables state tracking by specifying a path to a status file (e.g., `status.json`).
 -   `--date <date>`: Overrides the current date with a custom date (formatted as `YYYY-MM-DD`) for all calculations.
+
+### Usage Examples
+
+**Global Installation:**
+```bash
+git-cicd --run
+git-cicd --dry-run --config custom-config.json
+git-cicd --init --status status.json
+```
+
+**Local Installation:**
+```bash
+node cicd-branch-tool.js --run
+node cicd-branch-tool.js --dry-run --config custom-config.json
+node cicd-branch-tool.js --init --status status.json
+```
 
 ## 4. Core Functionality
 
@@ -32,7 +63,61 @@ The tool implements a time-based branching strategy with the following environme
 -   **pre**: Pre-production/Staging branch.
 -   **pro**: Production branch.
 
-Date-based branches (formatted as `YYYY-MM-DD`) are created from `base` every two weeks and promoted through the environments according to the cycle schedule.
+Date-based branches (formatted as `YYYY-MM-DD` or with optional prefix like `prefix/YYYY-MM-DD`) are created from `base` every two weeks and promoted through the environments according to the cycle schedule.
+
+#### Branch Naming Examples:
+
+**Without prefix (default):**
+- `2025-08-18`
+- `2025-09-01`
+- `2025-09-15`
+
+**With prefix (e.g., `"branchPrefix": "feature"`):**
+- `feature/2025-08-18`
+- `feature/2025-09-01`
+- `feature/2025-09-15`
+
+**With prefix (e.g., `"branchPrefix": "release"`):**
+- `release/2025-08-18`
+- `release/2025-09-01`
+- `release/2025-09-15`
+
+#### Automatic Branch Cleanup
+
+When `autoRemoveBranches` is set to `true` and a `branchPrefix` is configured, the tool will automatically clean up old date-based branches after completing the workflow:
+
+- **Retention Policy**: Keeps the most recent cycles as specified by `branchRetentionCycles` (default: 3)
+- **Configurable Expiration**: The number of cycles to retain can be customized via `branchRetentionCycles`
+- **Cleanup Scope**: Only removes branches that match the configured prefix pattern
+- **Safety**: Does not remove environment branches (`base`, `uat`, `pre`, `pro`)
+- **Pattern Matching**: Only removes branches matching `{prefix}/YYYY-MM-DD` format
+- **Validation**: Invalid retention values (< 1) automatically default to 3 cycles
+
+**Example cleanup scenarios:**
+
+**Scenario 1: Default retention (3 cycles)**
+```json
+{
+  "branchPrefix": "feature",
+  "autoRemoveBranches": true,
+  "branchRetentionCycles": 3
+}
+```
+If you have branches: `feature/2025-07-01`, `feature/2025-07-15`, `feature/2025-08-01`, `feature/2025-08-15`, `feature/2025-09-01`
+
+The tool will:
+- Keep: `feature/2025-08-15`, `feature/2025-09-01`, `feature/2025-09-15` (3 most recent)
+- Remove: `feature/2025-07-01`, `feature/2025-07-15` (older than 3 cycles)
+
+**Scenario 2: Extended retention (5 cycles)**
+```json
+{
+  "branchPrefix": "release",
+  "autoRemoveBranches": true,
+  "branchRetentionCycles": 5
+}
+```
+Keeps 5 most recent cycles instead of 3, providing longer retention for compliance or rollback requirements.
 
 ### 4.2 Key Operations
 
@@ -71,6 +156,8 @@ The tool is designed to run automatically every other Monday (configurable via `
 
 ### 6.1 Default Configuration
 
+The tool looks for a `config.json` file in the current directory by default. If not found, it uses the built-in defaults:
+
 ```json
 {
   "baseBranch": "base",
@@ -78,13 +165,28 @@ The tool is designed to run automatically every other Monday (configurable via `
   "preBranch": "pre",
   "proBranch": "pro",
   "remoteName": "origin",
-  "cycleWeeks": 2
+  "cycleWeeks": 2,
+  "branchPrefix": "",
+  "autoRemoveBranches": false,
+  "branchRetentionCycles": 3
 }
 ```
 
+#### Configuration Options:
+
+- `baseBranch`: Main development branch name
+- `uatBranch`: User Acceptance Testing branch name
+- `preBranch`: Pre-production/staging branch name
+- `proBranch`: Production branch name
+- `remoteName`: Git remote name (typically "origin")
+- `cycleWeeks`: Release cycle length in weeks
+- `branchPrefix`: Optional prefix for date-based branches (e.g., "feature" creates "feature/2025-08-18")
+- `autoRemoveBranches`: Enable automatic cleanup of old prefixed branches (default: false)
+- `branchRetentionCycles`: Number of release cycles to retain during cleanup (default: 3)
+
 ### 6.2 Custom Configuration
 
-Configuration can be customized via a `cicd-config.json` file in the working directory or a custom path specified with the `--config` option.
+Configuration can be customized via a `config.json` file in the working directory or a custom path specified with the `--config` option.
 
 ## 7. State Management
 

@@ -14,7 +14,10 @@ const DEFAULT_CONFIG = {
 	preBranch: 'pre',
 	proBranch: 'pro',
 	remoteName: 'origin',
-	cycleWeeks: 2 // Default 2-week cycle
+	cycleWeeks: 2, // Default 2-week cycle
+	branchPrefix: '', // Default no prefix
+	autoRemoveBranches: false, // Default no automatic branch removal
+	branchRetentionCycles: 3 // Default keep 3 cycles
 };
 
 // Error codes for CI/CD pipeline
@@ -32,14 +35,14 @@ const ERROR_CODES = {
 async function loadConfig(configPath) {
 	try {
 		const resolvedPath = configPath ? path.resolve(configPath) : 
-			path.resolve(process.cwd(), 'cicd-config.json');
+			path.resolve(process.cwd(), 'config.json');
 		
 		if (!existsSync(resolvedPath)) {
 			if (configPath) {
 				console.error(`[FATAL] Config file not found: ${resolvedPath}`);
 				process.exit(ERROR_CODES.FILE_NOT_FOUND);
 			}
-			console.warn('Using default configuration (cicd-config.json not found)');
+			console.warn('Using default configuration (config.json not found)');
 			return DEFAULT_CONFIG;
 		}
 
@@ -80,17 +83,22 @@ async function saveStatusFile(statusPath, state) {
 }
 
 // Calculate branch dates based on specified date
-function calculateBranchDates(currentDate = new Date(), cycleWeeks = 2) {
+function calculateBranchDates(currentDate = new Date(), cycleWeeks = 2, branchPrefix = '') {
 	let cycleMonday = startOfWeek(currentDate, { weekStartsOn: 1 }); // 1 = Monday
 	
 	if (!isMonday(currentDate)) {
 		cycleMonday = addWeeks(cycleMonday, -1);
 	}
 	
+	const formatBranchName = (date) => {
+		const dateStr = format(date, 'yyyy-MM-dd');
+		return branchPrefix ? `${branchPrefix}/${dateStr}` : dateStr;
+	};
+	
 	return {
-		newBaseBranch: format(cycleMonday, 'yyyy-MM-dd'),
-		uatSourceBranch: format(addWeeks(cycleMonday, -cycleWeeks), 'yyyy-MM-dd'),
-		proSourceBranch: format(addWeeks(cycleMonday, -cycleWeeks * 2), 'yyyy-MM-dd'),
+		newBaseBranch: formatBranchName(cycleMonday),
+		uatSourceBranch: formatBranchName(addWeeks(cycleMonday, -cycleWeeks)),
+		proSourceBranch: formatBranchName(addWeeks(cycleMonday, -cycleWeeks * 2)),
 		cycleMonday: format(cycleMonday, 'yyyy-MM-dd')
 	};
 }
@@ -225,6 +233,67 @@ class GitOperations {
 			process.exit(ERROR_CODES.GIT_OPERATION_FAILED);
 		}
 	}
+
+	async deleteBranch(branch, critical = false) {
+		return this.execute(
+			() => this.git.deleteLocalBranch(branch)
+				.then(() => this.git.push(this.config.remoteName, `:${branch}`)),
+			`Deleting branch ${branch} (local and remote)`,
+			critical
+		);
+	}
+
+	async removeOldBranches(branchPrefix, retentionCycles = 3) {
+		if (!branchPrefix) {
+			console.log('[INFO] No branch prefix configured, skipping branch cleanup');
+			return;
+		}
+
+		// Validate retention cycles
+		if (retentionCycles < 1) {
+			console.warn(`[WARN] Invalid retention cycles (${retentionCycles}), using default of 3`);
+			retentionCycles = 3;
+		}
+
+		try {
+			const localBranches = await this.git.branchLocal();
+			const prefixedBranches = localBranches.all.filter(branch => 
+				branch.startsWith(`${branchPrefix}/`) && 
+				/\d{4}-\d{2}-\d{2}$/.test(branch.split('/')[1])
+			);
+
+			if (prefixedBranches.length <= retentionCycles) {
+				console.log(`[INFO] Found ${prefixedBranches.length} prefixed branches, keeping all (minimum ${retentionCycles})`);
+				return;
+			}
+
+			// Sort branches by date (newest first)
+			const sortedBranches = prefixedBranches.sort((a, b) => {
+				const dateA = new Date(a.split('/')[1]);
+				const dateB = new Date(b.split('/')[1]);
+				return dateB - dateA;
+			});
+
+			// Keep the most recent branches, remove the rest
+			const branchesToRemove = sortedBranches.slice(retentionCycles);
+			
+			if (branchesToRemove.length > 0) {
+				console.log(`\n=== Cleaning up old branches ===`);
+				console.log(`Retention policy: Keep ${retentionCycles} most recent cycles`);
+				console.log(`Keeping: ${sortedBranches.slice(0, retentionCycles).join(', ')}`);
+				console.log(`Removing ${branchesToRemove.length} old branches: ${branchesToRemove.join(', ')}`);
+				
+				for (const branch of branchesToRemove) {
+					await this.deleteBranch(branch, false);
+				}
+				console.log(`[SUCCESS] Cleaned up ${branchesToRemove.length} old branches`);
+			} else {
+				console.log('[INFO] No old branches to remove');
+			}
+		} catch (error) {
+			console.error(`[WARN] Failed to clean up old branches: ${error.message}`);
+		}
+	}
 }
 
 // Initialize required date-based branches with strict error handling
@@ -234,7 +303,7 @@ async function initializeBranches(config, gitDir, dryRun, statusPath, customDate
 	const currentDate = customDate || new Date();
 	
 	// Use state from file or calculate based on date
-	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks);
+	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks, config.branchPrefix);
 	const branchesToCreate = {
 		base: state.base || newBaseBranch,
 		uat: state.uat || uatSourceBranch,
@@ -303,7 +372,7 @@ async function verifyBranches(config, gitDir, customDate = null) {
 	console.log(`Using date: ${format(currentDate, 'yyyy-MM-dd')}`);
 	console.log(`Repository: ${gitDir || process.cwd()}`);
 	
-	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks);
+	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks, config.branchPrefix);
 	const requiredBranches = [
 		config.baseBranch, config.uatBranch, config.preBranch, config.proBranch,
 		uatSourceBranch, proSourceBranch
@@ -362,7 +431,7 @@ async function runWorkflow(config, gitDir, dryRun, statusPath, customDate = null
 	}
 	
 	// Calculate branch names based on custom date
-	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks);
+	const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleWeeks, config.branchPrefix);
 	console.log('\nCycle branches:');
 	console.log(`- New base: ${newBaseBranch}`);
 	console.log(`- UAT source: ${uatSourceBranch}`);
@@ -499,12 +568,18 @@ async function runWorkflow(config, gitDir, dryRun, statusPath, customDate = null
 		console.log('This was a dry run - no changes were made');
 	} else {
 		console.log('All operations completed successfully');
+		
+		// Cleanup old branches if auto removal is enabled
+		if (config.autoRemoveBranches && config.branchPrefix) {
+			await git.removeOldBranches(config.branchPrefix, config.branchRetentionCycles || 3);
+		}
 	}
 	process.exit(0);
 }
 
 // Configure CLI with --date option
 program
+	.name('git-cicd')
 	.description('Automates CI/CD branch promotion with 2-week cycles')
 	.option('--run', 'Execute workflow (makes changes)')
 	.option('--dry-run', 'Preview actions without changes')
