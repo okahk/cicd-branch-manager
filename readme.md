@@ -7,7 +7,7 @@ A command-line tool to automate a Git-based branching and merging strategy for a
 -   **Automated Branching**: Creates new date-based branches from `base` every cycle.
 -   **Scheduled Promotions**: Re-bases and merges branches on a configurable, scheduled interval (e.g., every two Mondays).
 -   **State Management**: Tracks the current cycle's branches in a `status.json` file to ensure continuity.
--   **Safety Checks**: Includes a `--dry-run` mode, verifies branch existence, and uses safe force-pushing.
+-   **Safety Checks**: Includes a `dry-run` mode, verifies branch existence, and uses safe force-pushing.
 -   **Off-Cycle Updates**: Can merge `base` into the current cycle's branch on non-scheduled days to keep it up-to-date.
 
 ## Prerequisites
@@ -28,7 +28,7 @@ npm install -g git+https://github.com/your-username/cicd-branch-manager.git
 After global installation, you can use the tool with:
 
 ```bash
-git-cicd --run
+git-cicd run
 ```
 
 ### Local Installation
@@ -85,12 +85,12 @@ Executes the complete promotion workflow, including creating, rebasing, and merg
 
 **Global installation:**
 ```bash
-git-cicd --run
+git-cicd run
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js --run
+node cicd-branch-tool.js run
 ```
 
 ### Dry Run (Preview)
@@ -99,12 +99,12 @@ Simulates the entire workflow without making any changes. Use this to see what a
 
 **Global installation:**
 ```bash
-git-cicd --dry-run
+git-cicd dry-run
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js --dry-run
+node cicd-branch-tool.js dry-run
 ```
 
 ### Initialize Branches
@@ -113,12 +113,12 @@ Creates the required date-based branches (`base`, `uat`, `pre`, `pro`) if they d
 
 **Global installation:**
 ```bash
-git-cicd --init
+git-cicd init
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js --init
+node cicd-branch-tool.js init
 ```
 
 ### Verify Branches
@@ -127,12 +127,12 @@ Checks if all required branches for the current cycle exist in the repository an
 
 **Global installation:**
 ```bash
-git-cicd --verify
+git-cicd verify
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js --verify
+node cicd-branch-tool.js verify
 ```
 
 ### Command-Line Options
@@ -140,7 +140,7 @@ node cicd-branch-tool.js --verify
 All options work with both global and local installations:
 
 -   `--config <path>`: Path to a custom configuration file.
--   `--git <dir>`: Path to the Git repository. Defaults to the current directory.
+-   `--git-dir <dir>`: Path to the Git repository. Defaults to the current directory.
 -   `--status <file>`: Path to the status file for state management (e.g., `status.json`).
 -   `--date <YYYY-MM-DD>`: Use a custom date for calculations instead of the current date.
 
@@ -158,29 +158,29 @@ All options work with both global and local installations:
 
 3. **Initialize branches for the first time:**
    ```bash
-   git-cicd --init --status status.json
+   git-cicd init --status status.json
    ```
 
 4. **Run the workflow:**
    ```bash
-   git-cicd --run --status status.json
+   git-cicd run --status status.json
    ```
 
 5. **Preview changes before running:**
    ```bash
-   git-cicd --dry-run --status status.json
+   git-cicd dry-run --status status.json
    ```
 
 ### Example: Running on a Specific Date
 
 **Global installation:**
 ```bash
-git-cicd --run --date 2025-08-11 --status status.json
+git-cicd run --date 2025-08-11 --status status.json
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js --run --date 2025-08-11 --status status.json
+node cicd-branch-tool.js run --date 2025-08-11 --status status.json
 ```
 
 ## Workflow
@@ -195,7 +195,7 @@ The tool automates the following branching and promotion strategy:
     -   Source branches are merged into their respective environment branches (`uat`, `pre`, `pro`) if they have diverged.
 
 2.  **On a non-scheduled day**:
-    -   If run with `--run`, the tool will merge the latest changes from `base` into the current cycle's branch (e.g., `2025-08-11`) to keep it up-to-date.
+    -   If run with `run`, the tool will merge the latest changes from `base` into the current cycle's branch (e.g., `2025-08-11`) to keep it up-to-date.
 
 ## Error Codes
 
