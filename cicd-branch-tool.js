@@ -20,6 +20,13 @@ const DEFAULT_CONFIG = {
 	branchRetentionCycles: 3 // Default keep 3 cycles
 };
 
+const DEFINT_COMMAND_LINE_CONFIG = {
+	config: 'config.json',
+	status: 'status.json',
+	dryRun: false,
+	git:"./"
+};
+
 // Error codes for CI/CD pipeline
 const ERROR_CODES = {
 	INVALID_COMMAND: 1,
@@ -34,9 +41,11 @@ const ERROR_CODES = {
 // Load configuration from file or exit on critical error
 async function loadConfig(configPath) {
 	try {
+		/*
 		const resolvedPath = configPath ? path.resolve(configPath) : 
 			path.resolve(process.cwd(), 'config.json');
-		
+		*/
+		const resolvedPath = path.resolve(configPath);
 		if (!existsSync(resolvedPath)) {
 			if (configPath) {
 				console.error(`[FATAL] Config file not found: ${resolvedPath}`);
@@ -62,7 +71,7 @@ async function loadStatusFile(statusPath) {
 			const data = await fs.readFile(statusPath, 'utf8');
 			return JSON.parse(data);
 		}
-		console.log(`[INFO] Status file not found at ${statusPath}, creating new state`);
+		console.info(`[INFO] Status file not found at ${statusPath}, creating new state`);
 		return {};
 	} catch (error) {
 		console.error(`[FATAL] Failed to read status file: ${error.message}`);
@@ -591,7 +600,12 @@ program
 	.option('--date <date>', 'Custom date to use for calculations (format: YYYY-MM-DD)')
 	.parse(process.argv);
 
-const options = program.opts();
+// DEFINT_COMMAND_LINE_CONFIG
+// merge options with DEFINT_COMMAND_LINE_CONFIG
+// merge not defined
+const options = {};
+Object.assign(options, DEFINT_COMMAND_LINE_CONFIG, program.opts());
+
 
 // Validate command
 if (!options.run && !options.dryRun && !options.verify && !options.init) {
@@ -621,6 +635,7 @@ if (options.git && !existsSync(options.git)) {
 // Resolve paths
 const gitDir = options.git ? path.resolve(options.git) : null;
 const statusPath = options.status ? path.resolve(options.status) : null;
+
 
 // Run selected command with error handling
 loadConfig(options.config)
