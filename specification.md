@@ -8,7 +8,7 @@ The CI/CD Branch Management Tool is a Node.js command-line application designed 
 
 The tool supports two installation methods:
 
-1. **Global Installation** (Recommended): Install globally via npm to use the `git-cicd` command from anywhere:
+1. **Global Installation** (Recommended): Install globally via npm to use the `cicd-branch-manager` command from anywhere:
    ```bash
    npm install -g git+https://github.com/your-username/cicd-branch-manager.git
    ```
@@ -25,31 +25,44 @@ This tool automates the repetitive branching and synchronization tasks in a stru
 
 ## 3. Command-Line Interface (CLI)
 
-The tool is operated via the `git-cicd` command (global installation) or `node cicd-branch-tool.js` (local installation) with the following options:
+The tool is operated via the `cicd-branch-manager` command (global installation) or `node cicd-branch-tool.js` (local installation) with the following structure:
 
--   `--run`: Executes the full branch synchronization workflow, making live changes to the repository.
--   `--dry-run`: Simulates the workflow without making any actual changes, providing a preview of the actions that would be taken.
--   `verify`: Checks if all required branches for the current cycle exist in the repository.
+**Command Structure:**
+```
+cicd-branch-manager [options] <command>
+```
+
+**Commands:**
+-   `run`: Executes the full branch synchronization workflow, making live changes to the repository.
 -   `init`: Initializes the required date-based branches and creates a status file if missing, based on the current or a specified date.
--   `--config <path>`: Specifies the path to a custom JSON configuration file.
--   `--git-dir <dir>`: Sets the path to the Git repository directory.
--   `--status <file>`: **Required for state tracking.** Specifies the path to the status JSON file (e.g., `status.json`).
+-   `verify`: Checks if all required branches for the current cycle exist in the repository.
+
+**Options:**
+-   `-c, --config <path>`: Specifies the path to a custom JSON configuration file (default: `config.json`).
+-   `-s, --status <path>`: Specifies the path to the status JSON file (default: `status.json`).
+-   `-d, --dry-run`: Simulates the workflow without making any actual changes, providing a preview of the actions that would be taken.
+-   `-g, --git-dir <path>`: Sets the path to the Git repository directory (default: current directory).
 -   `--date <date>`: Overrides the current date with a custom date (formatted as `YYYY-MM-DD`) for all calculations.
+-   `-v, --verify`: Alternative way to check required branches exist (legacy option).
 
 ### Usage Examples
 
 **Global Installation:**
 ```bash
-git-cicd run --status status.json
-git-cicd dry-run --config custom-config.json --status status.json
-git-cicd init --status status.json
+cicd-branch-manager run
+cicd-branch-manager --dry-run run
+cicd-branch-manager --config custom-config.json --status custom-status.json run
+cicd-branch-manager init
+cicd-branch-manager verify
 ```
 
 **Local Installation:**
 ```bash
-node cicd-branch-tool.js run --status status.json
-node cicd-branch-tool.js dry-run --config custom-config.json --status status.json
-node cicd-branch-tool.js init --status status.json
+node cicd-branch-tool.js run
+node cicd-branch-tool.js --dry-run run
+node cicd-branch-tool.js --config custom-config.json --status custom-status.json run
+node cicd-branch-tool.js init
+node cicd-branch-tool.js verify
 ```
 
 ## 4. Core Functionality
@@ -124,6 +137,7 @@ Keeps 5 most recent cycles instead of 3, providing longer retention for complian
 4.  **Synchronization (Merge)**: Merges changes from target branches into environment branches to prepare them for the new cycle.
 5.  **Branch Verification**: Checks for the existence of all branches referenced in the status file.
 6.  **Safety Checks**: Verifies branch existence and checks for divergence before merging/rebase.
+7.  **Branch Cleanup**: Optionally removes old date-based branches when `autoRemoveBranches` is enabled.
 
 ## 5. Technical Implementation
 
@@ -161,7 +175,8 @@ The tool looks for a `config.json` file in the current directory by default. If 
 	"cycleDays": 14,
 	"branchPrefix": "",
 	"autoRemoveBranches": false,
-	"branchRetentionCycles": 3
+	"branchRetentionCycles": 3,
+	"dateFormat": "yyyy-MM-dd"
 }
 ```
 
@@ -176,6 +191,7 @@ The tool looks for a `config.json` file in the current directory by default. If 
 - `branchPrefix`: Optional prefix for date-based branches (e.g., "feature" creates "feature/2025-08-18")
 - `autoRemoveBranches`: Enable automatic cleanup of old prefixed branches (default: false)
 - `branchRetentionCycles`: Number of release cycles to retain during cleanup (default: 3)
+- `dateFormat`: Date format for branch names (default: "yyyy-MM-dd")
 
 ### 6.2 Custom Configuration
 
@@ -195,53 +211,49 @@ The status file (e.g., `status.json`) is a JSON object that persists the state o
 **Example `status.json`:**
 ```json
 {
-  "last_cycle": "2025-09-01",
-  "last_update": "2025-09-15",
+  "lastCycleDate": "2025-09-01",
   "base": "2025-09-15",
   "uat": "2025-09-01",
   "pre": "2025-08-18",
   "pro": "2025-08-04"
 }
 ```
--   `last_cycle`: The date when the last full cycle workflow was executed.
--   `last_update`: The date when the status was last modified.
+-   `lastCycleDate`: The date when the last full cycle workflow was executed.
 -   `base`: The date-based branch representing the target for the *current* development cycle.
 -   `uat`: The date-based branch that the `uat` environment should be synchronized with.
 -   `pre`: The date-based branch that the `pre` environment should be synchronized with.
 -   `pro`: The date-based branch that the `pro` environment should be synchronized with.
 
-## 8. Workflow Execution (`--run`)
+## 8. Workflow Execution (`run`)
 
 The main workflow, which runs when a new cycle is detected, consists of the following phases:
 
-1.  **Synchronize Environments (Rebase Phase):** Environment branches are rebased onto the date-based branches defined in the status object, ensuring a clean, linear history for deployment.
-    -   Rebase `pro` branch onto the branch named in `status.pro`
-    -   Rebase `pre` branch onto the branch named in `status.pre`
-    -   Rebase `uat` branch onto the branch named in `status.uat`
+1.  **Verify Required Branches:** Check that all required branches exist before proceeding with the workflow.
 
-2.  **Update Status & Create New Cycle Target:** The status is rotated backward to promote the previous cycle's targets. A new date-based branch is created for the new cycle.
-    -   Set `status.pro` = `status.pre`
-    -   Set `status.pre` = `status.uat`
-    -   Set `status.uat` = `status.base`
-    -   Create a new date-based branch `new_base` from `base` (e.g., `2025-09-15`)
-    -   Set `status.base` = `new_base`
-    -   Set `status.last_cycle` = `TODAY`
+2.  **Create New Base Branch:** Create a new date-based branch from the main `base` branch for the current cycle.
 
-3.  **Synchronize Environments (Merge Phase):** The latest changes are merged from the stable target branches into the environment branches to prepare them for the new cycle.
-    -   Merge the branch named in `status.base` -> `base` branch
-    -   Merge the branch named in `status.uat` -> `uat` branch (if diverged)
-    -   Merge the branch named in `status.pre` -> `pre` branch (if diverged)
-    -   Merge the branch named in `status.pro` -> `pro` branch (if diverged)
+3.  **Update UAT Branch:** Rebase the UAT source branch onto the new base branch to incorporate latest changes.
 
-4.  **Save State:** The updated status object is saved to the status file.
+4.  **Update PRE Branch:** Merge the UAT source branch into the `pre` branch with a merge commit.
+
+5.  **Update PRO Branch:** Merge the PRO source branch into the `pro` branch with a merge commit.
+
+6.  **Update State:** Save the new branch targets to the status file:
+    -   Set `status.base` = new date-based branch
+    -   Set `status.uat` = UAT source branch
+    -   Set `status.pre` = UAT source branch  
+    -   Set `status.pro` = PRO source branch
+    -   Set `status.lastCycleDate` = current cycle date
+
+7.  **Branch Cleanup (Optional):** If `autoRemoveBranches` is enabled, remove old date-based branches according to the retention policy.
 
 ### 8.1 Off-Cycle Execution
 
-If the tool is run with `--run` or `--dry-run` on a day that is not a scheduled execution day (i.e., `(TODAY - status.last_cycle) < config.cycleDays`), it performs a limited operation instead of the full workflow:
+If the tool is run with `run` on a day that is not a scheduled execution day (i.e., `(TODAY - status.lastCycleDate) < config.cycleDays`), it performs a limited operation instead of the full workflow:
 
 - It attempts to merge the main `base` branch into the *current cycle's base branch* (i.e., the branch named in `status.base`, like `2025-09-15`).
 - This is useful for keeping the active development target updated with the latest changes from `base` between scheduled cycle days.
-- The script will exit with a fatal error if a merge conflict occurs during this operation.
+- The script will continue with a warning if run on a non-scheduled day.
 
 ## 9. Error Handling
 
@@ -254,7 +266,7 @@ The tool exits with specific error codes to facilitate CI/CD integration:
 -   `5`: One or more required branches are missing (e.g., a branch referenced in the status file does not exist).
 -   `6`: Configuration file or status file is invalid or cannot be parsed.
 -   `7`: The custom date provided via `--date` is invalid.
--   `8`: The `--status` option is required but was not provided.
+-   `8`: Invalid command or missing required command argument.
 
 ## 10. Safety Features
 

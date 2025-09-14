@@ -1,0 +1,12 @@
+{
+	"baseBranch": "base",
+	"uatBranch": "uat",
+	"preBranch": "pre",
+	"proBranch": "pro",
+	"remoteName": "origin",
+	"cycleDays": 2,
+	"branchPrefix": "",
+	"autoRemoveBranches": false,
+	"branchRetentionCycles": 3,
+    "dateFormat": "yyyy-MM-dd"
+}

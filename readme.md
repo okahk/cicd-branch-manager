@@ -19,7 +19,7 @@ A command-line tool to automate a Git-based branching and merging strategy for a
 
 ### Global Installation (Recommended)
 
-Install globally to use the `git-cicd` command from anywhere:
+Install globally to use the `cicd-branch-manager` command from anywhere:
 
 ```bash
 npm install -g git+https://github.com/your-username/cicd-branch-manager.git
@@ -28,7 +28,7 @@ npm install -g git+https://github.com/your-username/cicd-branch-manager.git
 After global installation, you can use the tool with:
 
 ```bash
-git-cicd run
+cicd-branch-manager run
 ```
 
 ### Local Installation
@@ -52,10 +52,11 @@ The tool is configured via a `config.json` file in the root of the project. You 
   "preBranch": "pre",
   "proBranch": "pro",
   "remoteName": "origin",
-  "cycleWeeks": 2,
+  "cycleDays": 14,
   "branchPrefix": "",
   "autoRemoveBranches": false,
-  "branchRetentionCycles": 3
+  "branchRetentionCycles": 3,
+  "dateFormat": "yyyy-MM-dd"
 }
 ```
 
@@ -64,16 +65,27 @@ The tool is configured via a `config.json` file in the root of the project. You 
 -   `preBranch`: The Pre-production (staging) branch.
 -   `proBranch`: The Production branch.
 -   `remoteName`: The name of the Git remote (e.g., `origin`).
--   `cycleWeeks`: The length of the release cycle in weeks (default is `2`).
+-   `cycleDays`: The length of the release cycle in days (default is `14`).
 -   `branchPrefix`: Optional prefix for date-based branches (e.g., "feature" creates "feature/2025-08-18" instead of "2025-08-18").
 -   `autoRemoveBranches`: When `true`, automatically removes old prefixed branches. Only works when `branchPrefix` is set.
 -   `branchRetentionCycles`: Number of release cycles to keep when `autoRemoveBranches` is enabled (default is `3`).
+-   `dateFormat`: Date format for branch names (default is `yyyy-MM-dd`).
 
 ## Usage
 
 ### Global Usage (After Global Installation)
 
-The tool is executed via `git-cicd` with one of the following primary commands:
+The tool is executed via `cicd-branch-manager` with one of the following primary commands:
+
+**Command Structure:**
+```
+cicd-branch-manager [options] <command>
+```
+
+**Available Commands:**
+- `run` - Execute the full workflow
+- `init` - Initialize branches  
+- `verify` - Verify branches exist
 
 ### Local Usage
 
@@ -85,7 +97,7 @@ Executes the complete promotion workflow, including creating, rebasing, and merg
 
 **Global installation:**
 ```bash
-git-cicd run
+cicd-branch-manager run
 ```
 
 **Local installation:**
@@ -99,12 +111,12 @@ Simulates the entire workflow without making any changes. Use this to see what a
 
 **Global installation:**
 ```bash
-git-cicd dry-run
+cicd-branch-manager --dry-run run
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js dry-run
+node cicd-branch-tool.js --dry-run run
 ```
 
 ### Initialize Branches
@@ -113,7 +125,7 @@ Creates the required date-based branches (`base`, `uat`, `pre`, `pro`) if they d
 
 **Global installation:**
 ```bash
-git-cicd init
+cicd-branch-manager init
 ```
 
 **Local installation:**
@@ -127,7 +139,7 @@ Checks if all required branches for the current cycle exist in the repository an
 
 **Global installation:**
 ```bash
-git-cicd verify
+cicd-branch-manager verify
 ```
 
 **Local installation:**
@@ -139,9 +151,10 @@ node cicd-branch-tool.js verify
 
 All options work with both global and local installations:
 
--   `--config <path>`: Path to a custom configuration file.
--   `--git-dir <dir>`: Path to the Git repository. Defaults to the current directory.
--   `--status <file>`: Path to the status file for state management (e.g., `status.json`).
+-   `-c, --config <path>`: Path to a custom configuration file (default: `config.json`).
+-   `-s, --status <path>`: Path to the status file for state management (default: `status.json`).
+-   `-d, --dry-run`: Simulate workflow without making changes.
+-   `-g, --git-dir <dir>`: Path to the Git repository. Defaults to the current directory.
 -   `--date <YYYY-MM-DD>`: Use a custom date for calculations instead of the current date.
 
 ### Quick Start Guide
@@ -158,41 +171,42 @@ All options work with both global and local installations:
 
 3. **Initialize branches for the first time:**
    ```bash
-   git-cicd init --status status.json
+   cicd-branch-manager init
    ```
 
 4. **Run the workflow:**
    ```bash
-   git-cicd run --status status.json
+   cicd-branch-manager run
    ```
 
 5. **Preview changes before running:**
    ```bash
-   git-cicd dry-run --status status.json
+   cicd-branch-manager --dry-run run
    ```
 
 ### Example: Running on a Specific Date
 
 **Global installation:**
 ```bash
-git-cicd run --date 2025-08-11 --status status.json
+cicd-branch-manager --date 2025-08-11 run
 ```
 
 **Local installation:**
 ```bash
-node cicd-branch-tool.js run --date 2025-08-11 --status status.json
+node cicd-branch-tool.js --date 2025-08-11 run
 ```
 
 ## Workflow
 
 The tool automates the following branching and promotion strategy:
 
-1.  **On a scheduled Monday**:
-    -   A new branch (e.g., `2025-08-11`) is created from `base`.
-    -   `pro` is rebased onto the production source branch from two cycles ago.
-    -   `pre` and `uat` are rebased onto the UAT source branch from the previous cycle.
-    -   The new branch is merged back into `base`.
-    -   Source branches are merged into their respective environment branches (`uat`, `pre`, `pro`) if they have diverged.
+1.  **On a scheduled execution day** (when enough days have passed since the last cycle):
+    -   A new date-based branch (e.g., `2025-08-11`) is created from `base`.
+    -   Environment branches are updated to track their designated date-based branches.
+    -   `uat` is rebased onto the new base branch.
+    -   `pre` is merged with the current uat source branch.
+    -   `pro` is merged with the current pro source branch.
+    -   The state is updated and saved to the status file.
 
 2.  **On a non-scheduled day**:
     -   If run with `run`, the tool will merge the latest changes from `base` into the current cycle's branch (e.g., `2025-08-11`) to keep it up-to-date.
