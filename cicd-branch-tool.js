@@ -112,7 +112,22 @@ function calculateNextCycleDateString(lastCycleDateString, cycleDays = 14, dateF
     }
 }
 
-
+function calculateCycleDateString(config, status, currentDateString, dateFormat = "yyyy-MM-dd")
+{
+    var nextDate;
+    if(status.lastCycleDate) // string
+	{
+        var today = parse(currentDateString, dateFormat, new Date());
+        const lastCycleDate = parse(status.lastCycleDate, config.dateFormat, new Date());
+        var dayDiff = differenceInCalendarDays(today, lastCycleDate);
+        var days = Math.floor( dayDiff / cycleDays ) * cycleDays;
+        nextDate = addDays(lastCycleDate, days);
+    } else {
+         const currentDate = startOfDay(new Date())
+		nextDate = currentDate;
+	}
+  	return format(nextDate, dateFormat);
+}
 function updateNextCycleBranches(config, status, currentDateString , cycleDays = 14, branchPrefix = '', dateFormat = "yyyy-MM-dd") 
 {
     // Create branch name formatter with prefix support
@@ -125,28 +140,14 @@ function updateNextCycleBranches(config, status, currentDateString , cycleDays =
     };
     var nextDate;
     
-    // console.log("status.lastCycleDate", status.lastCycleDate);
-    // console.log("cycleDays", cycleDays);
-    
     if(status.lastCycleDate) // string
 	{
-        /*
-        var today = parse(currentDate, dateFormat, new Date());
-        var lastTime = parse(lastCycleDate, dateFormat, new Date());
-        const dayDiff = differenceInCalendarDays(today, lastTime);
-        // Return true if difference is at least cycleDays
-        console.log("dayDiff", dayDiff);
-        return dayDiff >= cycleDays;
-        */
         var today = parse(currentDateString, dateFormat, new Date());
-        // var today = startOfDay(new Date());
         const lastCycleDate = parse(status.lastCycleDate, config.dateFormat, new Date());
         var dayDiff = differenceInCalendarDays(today, lastCycleDate);
         var days = Math.floor( dayDiff / cycleDays ) * cycleDays;
-        // nextDate = addDays(lastCycleDate, cycleDays);
         nextDate = addDays(lastCycleDate, days);
-        
-	} else {
+    } else {
          const currentDate = startOfDay(new Date())
 		nextDate = currentDate;
 	}
@@ -176,7 +177,6 @@ function updateNextCycleBranches(config, status, currentDateString , cycleDays =
 
 // Updated calculateBranchDates to use days instead of weeks
 function calculateBranchDates(config, status, dateString , cycleDays = 14, branchPrefix = '', dateFormat = "yyyy-MM-dd") {
-    console.log("status", status)
     return {
         newBaseBranch: status.base,
         uatSourceBranch: status.uat,  
@@ -300,14 +300,30 @@ class GitOperations {
         }
         return this.execute(
             async () => {
+				/*
                 await this.git.checkout(fromBranch);
                 await this.git.pull(this.config.remoteName, fromBranch);
                 await this.git.checkoutBranch(newBranch, fromBranch);
+				*/
+				await this.git.checkout(fromBranch);
+				await this.git.pull(this.config.remoteName, fromBranch);
+				
+				// 創建新分支
+				await this.git.checkoutBranch(newBranch, fromBranch);
+				
+				// 為新分支創建一個空提交來確保它有獨立的歷史
+				// 這樣後續從這個分支創建其他分支就不會有問題
+				await this.git.commit('CICD Initial branch commit', ['--allow-empty']);
             },
             `Creating branch ${newBranch} from ${fromBranch}`,
             critical
         );
     }
+	async emptyCommit(message)
+	{
+		// await this.git.commit('CICD Initial branch commit', ['--allow-empty']);
+		await this.git.commit(message, ['--allow-empty']);
+	}
 
     async rebase(branch, ontoBranch, critical = true) {
         return this.execute(
@@ -477,70 +493,79 @@ class GitOperations {
 }
 
 // Initialize required date-based branches with strict error handling
-async function initializeBranches(config, gitDir, dryRun, statusPath, customDate = null) {
-    const git = new GitOperations(config, gitDir, dryRun);
+async function initializeBranches(git, config, gitDir, dryRun, statusPath, customDate = null) {
+    // const git = new GitOperations(config, gitDir, dryRun);
     let status = await loadStatusFile(statusPath);
-    const currentDate = customDate || new Date();
-    
-    const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(config, status, currentDate, config.cycleDays, config.branchPrefix, config.dateFormat);
-    const branchesToCreate = {
-        base: status.base || newBaseBranch,
-        uat: status.uat || uatSourceBranch,
-        pre: status.pre || uatSourceBranch,
-        pro: status.pro || proSourceBranch
-    };
+    const currentDateString = customDate || getTodayString(config.dateFormat);
+    var newBaseBranch = `${config.branchPrefix}/` + calculateCycleDateString(config, status, currentDateString, config.dateFormat );
+    // const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(config, status, currentDate, config.cycleDays, config.branchPrefix, config.dateFormat);
+	
+	if(!status.base) status.base = newBaseBranch;
+	if(!status.uat) status.uat = newBaseBranch;
+	if(!status.pre) status.pre = newBaseBranch;
+	if(!status.pro) status.pro = newBaseBranch;
+	
+	var items = [
+		{
+			from:config.baseBranch,
+			to:status.base
+		},
+		{
+			from:status.uat,
+			to:config.uatBranch
+		},
+		{
+			from:status.pre,
+			to:config.preBranch
+		},
+		{
+			from:status.pro,
+			to:config.proBranch
+		}
+	];
+	console.log(items);
 
     console.log(`=== Initializing Required Branches ===`);
-    console.log(`Using date: ${currentDate}`);
+    console.log(`Using date: ${currentDateString}`);
     console.log(`Git directory: ${gitDir || process.cwd()}`);
-    console.log(`Target branches:`, branchesToCreate);
+    console.log(`Target branches:`, status);
 
-    const sourceBranches = {
-        base: config.baseBranch,
-        uat: config.uatBranch,
-        pre: config.preBranch,
-        pro: config.proBranch
-    };
-
-    for (const [env, targetBranch] of Object.entries(branchesToCreate)) {
-        const sourceBranch = sourceBranches[env];
-		console.log("");
-        logInfo(`Processing ${env} branch: ${targetBranch}`);
-
-        if (!await git.branchExists(sourceBranch)) {
-            exitWithError(ERROR_CODES.MISSING_BRANCHES, `Source branch ${sourceBranch} does not exist`);
+    
+	for (const item of items) {
+		console.log("item", item);
+		if (!await git.branchExists(item.from)) {
+            exitWithError(ERROR_CODES.MISSING_BRANCHES, `Source branch ${item.from} does not exist`);
         }
-
-        if (await git.branchExists(targetBranch)) {
-			logSuccess(`Branch ${targetBranch} already exists`);
+		if (await git.branchExists(item.to)) {
+			logSuccess(`Branch ${item.to} already exists`);
             continue;
         }
-		logWarn(`Branch ${targetBranch} missing - creating from ${sourceBranch}`)
-        
-        const createResult = await git.createBranch(sourceBranch, targetBranch);
+		const createResult = await git.createBranch(item.from, item.to);
         
         if (createResult.success && !dryRun) {
-            await git.push(targetBranch);
-            logSuccess(`Successfully created and pushed ${targetBranch}`);
+			await git.emptyCommit("CICD Initial branch commit");
+            await git.push(item.to);
+            logSuccess(`Successfully created and pushed ${item.to}`);
         } else if (dryRun) {
-            logInfo(`[DRY RUN] Would create ${targetBranch} from ${sourceBranch}`);
+            logInfo(`[DRY RUN] Would create ${item.to} from ${item.from}`);
         } else {
-            exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, `Failed to create ${targetBranch}`);
+            exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, `Failed to create ${item.to}`);
         }
-    }
-
-    if (statusPath) await saveStatusFile(statusPath, branchesToCreate);
+	}
+	
+    if (statusPath) await saveStatusFile(statusPath, status);
 	
 	console.log("");
     logOK('=== Initialization Complete ===');
-    process.exit(0);
+    // process.exit(0);
 }
 
 // Verify all required branches exist or exit
-async function verifyBranches(config, statusPath, gitDir, customDate = null) {
-    const git = new GitOperations(config, gitDir, true);
+async function verifyBranches(git, config, statusPath, gitDir, customDate = null) {
+    // const git = new GitOperations(config, gitDir, true);
 	let status = await loadStatusFile(statusPath) || {};
-    const currentDate = customDate || new Date();
+    // const currentDate = customDate || new Date();
+	const currentDate = customDate || getTodayString(config.dateFormat);
     
     console.log(`=== CI/CD Branch Verification ===`);
     console.log(`Using date: ${currentDate}`);
@@ -559,7 +584,7 @@ async function verifyBranches(config, statusPath, gitDir, customDate = null) {
 		proSourceBranch,
 		config.proBranch
     ];
-	console.log(branches);
+	// console.log(branches);
     
     console.log('\nChecking required branches:');
     let missing = false;
@@ -580,7 +605,7 @@ async function verifyBranches(config, statusPath, gitDir, customDate = null) {
         process.exit(ERROR_CODES.MISSING_BRANCHES);
     } else {
         console.log('✅  All required branches exist');
-        process.exit(0);
+        // process.exit(0);
     }
 }
 
@@ -651,7 +676,7 @@ async function createBranches(config, git, currentDateString, gitDir, dryRun, st
 
 	await git.checkout(config.baseBranch);
 	await git.pull(config.baseBranch);
-	
+
     const branches = updateNextCycleBranches(config, status, currentDateString, config.cycleDays, config.branchPrefix, config.dateFormat);
 	logBranchInfo(status, branches);
     const { newBaseBranch, uatSourceBranch, proSourceBranch} = branches;
@@ -778,9 +803,9 @@ async function removeOldBranches(config, status, git){
     }
 }
 
-async function runWorkflow(options, config, gitDir, dryRun, statusPath, customDate = null) {
+async function runWorkflow(git, options, config, gitDir, dryRun, statusPath, customDate = null) {
 	
-    const git = new GitOperations(config, gitDir, dryRun);
+    
     const currentDateString = customDate || getTodayString(config.dateFormat);
     let status = await loadStatusFile(statusPath) || {};
     const lastCycleDate = status.lastCycleDate || null;
@@ -799,7 +824,7 @@ async function runWorkflow(options, config, gitDir, dryRun, statusPath, customDa
     console.log('✅  State updated successfully');
 
 	logOK('Exiting gracefully.');
-	process.exit(0);
+	// process.exit(0);
 }
 
 
@@ -835,21 +860,21 @@ async function main() {
             exitWithError(ERROR_CODES.INVALID_DATE, `Invalid date format: ${options.date}. Use YYYY-MM-DD.`);
         }
 		*/
-		
+		const git = new GitOperations(config, options.gitDir, options.dryRun);
         switch (command) {
             case 'init':
-                await initializeBranches(config, options.gitDir, options.dryRun, options.status, customDate);
+                await initializeBranches(git, config, options.gitDir, options.dryRun, options.status, customDate);
                 break;
             case 'verify':
-                await verifyBranches(config, options.status, options.gitDir, customDate);
+                await verifyBranches(git, config, options.status, options.gitDir, customDate);
                 break;
             case 'run':
-                await runWorkflow(options, config, options.gitDir, options.dryRun, options.status, customDate);
+                await runWorkflow(git, options, config, options.gitDir, options.dryRun, options.status, customDate);
                 break;
             default:
                 exitWithError(ERROR_CODES.INVALID_COMMAND, `Unknown command: ${command}`);
         }
-        
+		await git.checkout(config.baseBranch);
         // removeOldBranches()
     } catch (error) {
 		console.error(error.stack);
