@@ -6,7 +6,7 @@ const { differenceInCalendarDays, addWeeks, addDays, startOfWeek, isMonday, form
 const fs = require('fs').promises;
 const path = require('path');
 const { existsSync } = require('fs');
-const { Console } = require('console');
+// const { Console } = require('console');
 
 // Default configuration
 const DEFAULT_CONFIG = {
@@ -207,6 +207,18 @@ class GitOperations {
             binary: 'git',
             maxConcurrentProcesses: 1
         });
+		if(config.debug)
+		{
+			this.git.outputHandler((command, stdout, stderr) => {
+				console.log("command", command);
+				stdout.on('data', (data) => {
+					console.log(`[stdout] ${data}`);
+				});
+				stderr.on('data', (data) => {
+					console.error(`[stderr] ${data}`);
+				});
+			});
+		}
         this.config = config;
         this.dryRun = dryRun;
         this.currentBranch = null;
@@ -268,8 +280,8 @@ class GitOperations {
     async pull(branch, critical = true) {
         return this.execute(
             async () => {
-                await this.git.checkout(branch);
-                var result = await this.git.pull(this.config.remoteName, branch);
+				await this.git.checkout(branch);
+				var result = await this.git.pull(this.config.remoteName, branch);
 				this.evaluateGitResult(result);
             },
             `Pulling from ${this.config.remoteName}/${branch}`,
@@ -319,6 +331,8 @@ class GitOperations {
 				{
 					// console.log("pull", this.config.remoteName, branch);
                 	await this.git.pull(this.config.remoteName, branch);
+				} else {
+					logWarn("remote branch not exists", branch);
 				}
 				// console.log("merge", [fromBranch, ...options]);
                 var result = await this.git.merge([fromBranch, ...options]);
@@ -576,23 +590,29 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
     logInfo(`${currentDate} Merge or Rebase Branches`);
 	// logWarn(`${format(currentDate, config.dateFormat)} is not a scheduled execution day.`);
     // logWarn(`${currentDate}  is not a scheduled execution day.`)
+	await git.checkout(config.baseBranch);
+	await git.pull(config.baseBranch);
     var items = [
         {
+			type:"merge",
             name: 'base',
             from:config.baseBranch, // base
             to: status.base // date
         },
         {
+			type:"merge",
             name: 'uat',
             from: status.uat, // uat
             to: config.uatBranch // date
         },
         {
+			type:"merge",
             name: 'pre',
             from: status.pre, // pre
             to: config.preBranch // date
         },
         {
+			type:"merge",
             name: 'pro',
             from: status.pro, // pro
             to: config.proBranch // date
@@ -601,26 +621,20 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
     for (const item of items) {
         const { name, from, to } = item;
         console.log("\n")
-        logInfo(`Process (${name})`);
+		logInfo(`Process (${name})`);
         // logInfo(`(${from}) → (${to})`);
-        const mergeResult = await git.merge(to, from, false, false )
-        if (mergeResult.success) {
-            logSuccess(`${name}: Merged (${from}) → (${to})`);
-        }
-    }
-
-    /*
-	if (status.base && status.base !== config.baseBranch) {
-		console.log(`[INFO] Attempting to merge '${config.baseBranch}' into the current cycle branch '${status.base}'.`);
-		const mergeResult = await git.merge(status.base, config.baseBranch, false, true);
-		if (mergeResult.success) {
-			await git.push(status.base);
-			logSuccess(`Merged '${config.baseBranch}' into '${status.base}' and pushed.`);
+		if(item.type == "merge")
+		{
+			const mergeResult = await git.merge(to, from, false, false )
+			if (mergeResult.success) {
+				console.log(`--- ${name}: Merged (${from}) → (${to})\n`);
+			}
+		} else if(item.type == "rebase")
+		{
+			// const rebaseResult = await git.rebase(to, from);
+			// console.log("rebase result", rebaseResult);
 		}
-	} else {
-		logInfo('No active cycle branch found in status file. Nothing to merge.');
-	}
-    */
+    }
 	
 }
 
@@ -634,8 +648,12 @@ function logBranchInfo(status, branches)
     console.log(`PRO: (${status.pro}) → (${proSourceBranch})`);
 }
 async function createBranches(config, git, currentDateString, gitDir, dryRun, status, customDate = null) {
+
+	await git.checkout(config.baseBranch);
+	await git.pull(config.baseBranch);
+	
     const branches = updateNextCycleBranches(config, status, currentDateString, config.cycleDays, config.branchPrefix, config.dateFormat);
-    logBranchInfo(status, branches);
+	logBranchInfo(status, branches);
     const { newBaseBranch, uatSourceBranch, proSourceBranch} = branches;
     
     console.log('\n=== Verifying Required Branches ===');
@@ -776,7 +794,6 @@ async function runWorkflow(options, config, gitDir, dryRun, statusPath, customDa
 	} else {
 		await mergeBranches(config, git, currentDateString, gitDir, dryRun, status, customDate);
     }
-    await git.checkout(config.baseBranch);
     
     await saveStatusFile(statusPath, status);
     console.log('✅  State updated successfully');
