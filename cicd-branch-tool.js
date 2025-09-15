@@ -244,7 +244,13 @@ class GitOperations {
             return null;
         }
     }
-
+	async remoteBranchExists(branch)
+	{
+		const remoteBranches = await this.git.raw([
+			'ls-remote', '--heads', this.config.remoteName, branch
+		]);
+		return remoteBranches.trim() !== '';
+	}
     async branchExists(branch) {
         try {
             const localBranches = await this.git.branchLocal();
@@ -307,8 +313,14 @@ class GitOperations {
         const options = noFastForward ? ['--no-ff'] : [];
         return this.execute(
             async () => {
-                await this.git.checkout(branch);
-                await this.git.pull(this.config.remoteName, branch);
+				// console.log("checkout", branch);
+				await this.git.checkout(branch);
+				if(await this.remoteBranchExists(branch))
+				{
+					// console.log("pull", this.config.remoteName, branch);
+                	await this.git.pull(this.config.remoteName, branch);
+				}
+				// console.log("merge", [fromBranch, ...options]);
                 var result = await this.git.merge([fromBranch, ...options]);
 				if (result.failed) {
 					console.log("Merge failed:", result.failed);
@@ -465,7 +477,7 @@ async function initializeBranches(config, gitDir, dryRun, statusPath, customDate
     };
 
     console.log(`=== Initializing Required Branches ===`);
-    console.log(`Using date: ${format(currentDate, 'yyyy-MM-dd')}`);
+    console.log(`Using date: ${currentDate}`);
     console.log(`Git directory: ${gitDir || process.cwd()}`);
     console.log(`Target branches:`, branchesToCreate);
 
@@ -504,26 +516,36 @@ async function initializeBranches(config, gitDir, dryRun, statusPath, customDate
     }
 
     if (statusPath) await saveStatusFile(statusPath, branchesToCreate);
-
+	
 	console.log("");
     logOK('=== Initialization Complete ===');
     process.exit(0);
 }
 
 // Verify all required branches exist or exit
-async function verifyBranches(config, gitDir, customDate = null) {
+async function verifyBranches(config, statusPath, gitDir, customDate = null) {
     const git = new GitOperations(config, gitDir, true);
+	let status = await loadStatusFile(statusPath) || {};
     const currentDate = customDate || new Date();
     
     console.log(`=== CI/CD Branch Verification ===`);
-    console.log(`Using date: ${format(currentDate, 'yyyy-MM-dd')}`);
+    console.log(`Using date: ${currentDate}`);
     console.log(`Repository: ${gitDir || process.cwd()}`);
     
-    const { newBaseBranch, uatSourceBranch, proSourceBranch } = calculateBranchDates(currentDate, config.cycleDays, config.branchPrefix, config.dateFormat);
+	var branches = calculateBranchDates(config, status, currentDate, config.cycleDays, config.branchPrefix, config.dateFormat);
+    const { newBaseBranch, uatSourceBranch, proSourceBranch } =branches;
     const requiredBranches = [
-        config.baseBranch, config.uatBranch, config.preBranch, config.proBranch,
-        uatSourceBranch, proSourceBranch
+		config.baseBranch, 
+		newBaseBranch,
+
+		uatSourceBranch, 
+		config.uatBranch, 
+		config.preBranch, 
+
+		proSourceBranch,
+		config.proBranch
     ];
+	console.log(branches);
     
     console.log('\nChecking required branches:');
     let missing = false;
@@ -569,11 +591,6 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
             name: 'pre',
             from: status.pre, // pre
             to: config.preBranch // date
-        },
-        {
-            name: 'pre',
-            from: status.pre,
-            to: config.preBranch
         },
         {
             name: 'pro',
@@ -795,7 +812,7 @@ async function main() {
     try {
         const config = await loadConfig(options.config);
 		
-		const customDate = await( options.date ? options.date : getToday(config.dateFormat) );
+		const customDate = await( options.date ? options.date : getTodayString(config.dateFormat) );
         /*
         if (customDate && isNaN(customDate.getTime())) {
             exitWithError(ERROR_CODES.INVALID_DATE, `Invalid date format: ${options.date}. Use YYYY-MM-DD.`);
@@ -807,7 +824,7 @@ async function main() {
                 await initializeBranches(config, options.gitDir, options.dryRun, options.status, customDate);
                 break;
             case 'verify':
-                await verifyBranches(config, options.gitDir, customDate);
+                await verifyBranches(config, options.status, options.gitDir, customDate);
                 break;
             case 'run':
                 await runWorkflow(options, config, options.gitDir, options.dryRun, options.status, customDate);
