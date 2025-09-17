@@ -37,6 +37,7 @@ function extractBranchLatestCommit(branchStatus) {
 
 // Helper function to update branch status (handles both old and new formats)
 function updateBranchStatus(currentStatus, newBranchName, commitInfo = null) {
+	// console.log(currentStatus, newBranchName, commitInfo);
 	if (currentStatus && typeof currentStatus === 'object' && currentStatus.branch) {
 		// New format - update branch and optionally commit info
 		const updated = { ...currentStatus, branch: newBranchName };
@@ -145,7 +146,7 @@ function normalizeStatusFormat(rawStatus) {
 	if (rawStatus.base && typeof rawStatus.base === 'object' && rawStatus.base.branch) {
 		// New format - preserve full structure
 		return {
-			base: rawStatus.base,
+			base: rawStatus.base || { branch: null },
 			uat: rawStatus.uat || { branch: null },
 			pre: rawStatus.pre || { branch: null },
 			pro: rawStatus.pro || { branch: null },
@@ -411,7 +412,9 @@ class GitOperations {
 
 	async getLatestCommitInfo(branch) {
 		try {
+			// console.log("checkout", branch);
 			await this.simpleGit.checkout(branch);
+			// console.log("call log");
 			const log = await this.simpleGit.log({ maxCount: 1 });
 			if (log.latest) {
 				var commit = log.latest;
@@ -595,38 +598,53 @@ async function emptyCommit(git, config, gitDir, dryRun, statusPath, customDate =
 async function initializeBranches(git, config, gitDir, dryRun, statusPath, customDate = null) {
 	let status = await loadStatusFile(statusPath);
 	const currentDateString = customDate || getTodayString(config.dateFormat);
-	console.log(currentDateString);
+	
 	var dateInfo = calculateCycleDateInfo(config, status, currentDateString, config.cycleDays, config.dateFormat);
-	var cycleDate = dateInfo.current;
-	var newBaseBranch = config.branchPrefix ? `${config.branchPrefix}/${cycleDate}` : cycleDate;
+	
+	var newBaseBranch = formatBranchName(config, dateInfo.current);
+	var proBranch = formatBranchName(config, "x1");
+	var preBranch = formatBranchName(config, "x2");
 
-	if (!getBranchName(status.base)) status.base = updateBranchStatus(status.base, newBaseBranch);
-	if (!getBranchName(status.uat)) status.uat = updateBranchStatus(status.uat, newBaseBranch);
-	if (!getBranchName(status.pre)) status.pre = updateBranchStatus(status.pre, newBaseBranch);
-	if (!getBranchName(status.pro)) status.pro = updateBranchStatus(status.pro, newBaseBranch);
-
+	
+	if (!status.base.branch) status.base.branch = newBaseBranch;
+	if (!status.uat.branch) status.uat.branch = preBranch;
+	if (!status.pre.branch) status.pre.branch = preBranch;
+	if (!status.pro.branch) status.pro.branch = proBranch;
+	
 	status.lastCycleDate = dateInfo.current;
 	status.aheadCycleDate = dateInfo.next;
 
 	var items = [
 		{
-			from: config.baseBranch,
-			to: getBranchName(status.base)
+			key:"base",
+			prev:null,
+			current: config.baseBranch,
+			next: status.base.branch
 		},
 		{
-			from: getBranchName(status.uat),
-			to: config.uatBranch
+			
+			key:"uat",
+			prev:status.base.branch,
+			current: status.uat.branch,
+			next: config.uatBranch
+			
 		},
 		{
-			from: getBranchName(status.pre),
-			to: config.preBranch
+			key:"pre",
+			prev:status.base.branch,
+			current: status.pre.branch,
+			next:config.preBranch
+			
 		},
 		{
-			from: getBranchName(status.pro),
-			to: config.proBranch
+			key:"pro",
+			prev:config.preBranch,
+			current: status.pro.branch,
+			next: config.proBranch
+			
 		}
 	];
-
+	
 	console.log(`=== Initializing Required Branches ===`);
 	console.log(`Using date: ${currentDateString}`);
 	console.log(`Git directory: ${gitDir || process.cwd()}`);
@@ -636,34 +654,81 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 		pre: getBranchName(status.pre),
 		pro: getBranchName(status.pro)
 	});
-
+	
 	for (const item of items) {
-		if (!await git.branchExists(item.from)) {
-			exitWithError(ERROR_CODES.MISSING_BRANCHES, `Source branch ${item.from} does not exist`);
-		}
-		if (await git.branchExists(item.to)) {
-			console.log(`⏩ Branch ${item.to} already exists ⏩ `);
-			continue;
-		}
-		const createResult = await git.createBranch(item.from, item.to);
+		var prevExists = item.prev ? await git.branchExists(item.prev) : false;
+		var currentExists = await git.branchExists(item.current);
+		var nextExists = await git.branchExists(item.next);
+		// console.log(prevExists, currentExists, nextExists);
+		if(!prevExists && !currentExists && !nextExists)
+			exitWithError(ERROR_CODES.MISSING_BRANCHES, `Source branch ${item.prev ? item.prev  : item.current} does not exist`);
+		var toDoList = [];
 
-		if (createResult.success && !dryRun) {
-			// Get latest commit info for the new branch
-			const commitInfo = await git.getLatestCommitInfo(item.to);
-			if (commitInfo) {
-				// Update status with commit info
-				if (item.to === getBranchName(status.base)) status.base = updateBranchStatus(status.base, item.to, commitInfo);
-				if (item.to === getBranchName(status.uat)) status.uat = updateBranchStatus(status.uat, item.to, commitInfo);
-				if (item.to === getBranchName(status.pre)) status.pre = updateBranchStatus(status.pre, item.to, commitInfo);
-				if (item.to === getBranchName(status.pro)) status.pro = updateBranchStatus(status.pro, item.to, commitInfo);
+		if(prevExists && !currentExists && !nextExists)
+		{
+			toDoList.push({
+				from:item.prev,
+				to:item.current
+			});
+			toDoList.push({
+				from:item.current,
+				to:item.next
+			});
+		} 
+		if(currentExists)
+		{
+			toDoList.push({
+				from:item.current,
+				to:item.next
+			});
+		}
+		if(nextExists)
+		{
+			toDoList.push({
+				from:item.next,
+				to:item.current
+			});
+		}
+
+		for (const item of toDoList) {
+			// await git.mergeBranches(item.from, item.to, true);
+			if (await git.branchExists(item.to)) {
+				const mergeResult = await git.merge(item.to, item.from, false, true);
+				// console.log(mergeResult);
+				// if (mergeResult && mergeResult.success) {
+			} else {
+				const createResult = await git.createBranch(item.from, item.to);
+				
+				if (createResult.success && !dryRun) {
+					// Get latest commit info for the new branch
+					await git.checkout(item.from);
+					await git.emptyCommit("CICD Initial branch commit");
+					await git.checkout(item.from);
+					await git.push(item.to);
+					
+				} else if (dryRun) {
+					logInfo(`[DRY RUN] Would create ${item.to} from ${item.from}`);
+				} else {
+					exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, `Failed to create ${item.to}`);
+				}
 			}
+				
 
-			await git.emptyCommit("CICD Initial branch commit");
-			await git.push(item.to);
-		} else if (dryRun) {
-			logInfo(`[DRY RUN] Would create ${item.to} from ${item.from}`);
-		} else {
-			exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, `Failed to create ${item.to}`);
+		}
+		
+	}
+
+	
+	
+	for (const item of items) {
+		// console.log("__checkout ", item.current, "________");
+		await git.checkout(item.current);
+		// console.log("get getLatestCommitInfo", item.current);
+		const commitInfo = await git.getLatestCommitInfo(item.current);
+		if (commitInfo) {
+			// console.log("key", item.current, item.key, commitInfo.hash);
+			// Update status with commit info
+			status[item.key].commit = commitInfo;
 		}
 	}
 
@@ -825,7 +890,7 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 					// Update commit info after successful merge
 					const commitInfo = await git.getLatestCommitInfo(from);
 					if (commitInfo) {
-						status[item.key] = updateBranchStatus(status.base, branchName, commitInfo);
+						status[item.key].commit = commitInfo;//  = updateBranchStatus(status[key], branchName, commitInfo);
 					}
 				} else {
 					hasError = true;
