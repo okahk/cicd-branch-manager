@@ -1,4 +1,5 @@
 {
+	"git":"./",
 	"baseBranch": "base",
 	"uatBranch": "uat",
 	"preBranch": "pre",

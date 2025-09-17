@@ -7,10 +7,12 @@
 		"git-cicd": "./cicd-branch-tool.js"
 	},
 	"scripts": {
-		"dry-run": "node cicd-branch-tool.js --dry-run --config config.json --git ./git",
-		"init": "node cicd-branch-tool.js --init --config config.json --git ./git",
-		"start": "node cicd-branch-tool.js --run --config config.json --git ./git",
-		"verify": "node cicd-branch-tool.js --verify --config config.json --git ./git"
+		"workflow":"node cicd-branch-tool.js workflow",
+		"merge":"node cicd-branch-tool.js merge",
+		"init": "node cicd-branch-tool.js init",
+		"verify": "node cicd-branch-tool.js verify",
+		"run": "node cicd-branch-tool.js run",
+		"echo":"echo %*"
 	},
 	"dependencies": {
 		"commander": "^9.4.0",
