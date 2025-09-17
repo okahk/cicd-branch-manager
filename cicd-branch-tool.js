@@ -757,6 +757,7 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 	if (status.aheadCycleDate) {
 		var branch = formatBranchName(config, status.aheadCycleDate);
 		if (await git.remoteBranchExists(branch)) {
+			
 			items.push(
 				{
 					type: "merge",
