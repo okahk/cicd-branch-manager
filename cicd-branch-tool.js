@@ -838,6 +838,7 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 				{
 					type: "merge",
 					name: 'base',
+					key:"base",
 					ref:config.baseBranch,
 					commit: extractBranchLatestCommit(status.base),
 					from: config.baseBranch, // base
@@ -985,7 +986,7 @@ async function createBranches(config, git, currentDateString, gitDir, dryRun, st
 			type:"rebase",
 			name:'=== Updating PRE Branch ===',
 			from:uatSourceBranch,
-			to:proSourcconfig.preBrancheBranch,
+			to:proSourceBranch,
 			noFastForward:true
 		},
 		{
