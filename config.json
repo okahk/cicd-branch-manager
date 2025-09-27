@@ -1,5 +1,6 @@
 {
 	"git":"./",
+	"syncStrategy":"merge",
 	"baseBranch": "base",
 	"uatBranch": "uat",
 	"preBranch": "pre",

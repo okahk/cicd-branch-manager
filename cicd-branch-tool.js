@@ -6,10 +6,8 @@ const { differenceInCalendarDays, addWeeks, addDays, startOfWeek, isMonday, form
 const fs = require('fs').promises;
 const path = require('path');
 const { existsSync } = require('fs');
+const { stdout } = require('process');
 
-// Constants and configuration
-
-// const { Console } = require('console');
 
 // Helper function to get branch name from status (handles both old and new formats)
 function getBranchName(branchStatus) {
@@ -93,7 +91,8 @@ const exitWithError = (code, message) => {
 	console.error(`[FATAL] ${message}`);
 	process.exit(code);
 };
-// symbols ⏩ 🆗 ❌ ⚠️ ✅ ✨️
+// symbols ⏩ 🆗 ❌ ⚠️ ✅ ✨️ ➡️ →
+//🔙 🔚 🔛 🔜 🔝 🔁 🔂 🔃 🔄
 
 const logInfo = (message) => console.info(`✨️ [INFO] ${message}`);
 const logValid = (message) => console.log(`✅ [valid] ${message}`);
@@ -103,7 +102,15 @@ const logOK = (message) => console.log(`🆗 ${message}`);
 const logWarn = (message) => console.warn(`⚠️ [WARN] ${message}`);
 const logError = (message) => console.error(`❌ [ERROR] ${message}`);
 const logAction = (message) => console.log(`   [ACTION] ${message}`);
-const logLine = () => console.log(`=====================================================`);
+const logLine = (text) => {
+	if(text)
+	{
+		console.log(`========== ${text} ==========`);
+	} else {
+		console.log(`=====================================================`);
+	}
+	
+}
 
 
 // Load configuration from file or exit on critical error
@@ -250,17 +257,16 @@ function calculateNextCycleDateString(lastCycleDateString, cycleDays = 14, dateF
 function calculateCycleDateInfo(config, status, currentDateString, cycleDays = 14, dateFormat = "yyyy-MM-dd") {
 	var nextDate;
 	var aheadDate;
-
+	var today = parse(currentDateString, dateFormat, new Date());
 	if (status.lastCycleDate) // string
 	{
-		var today = parse(currentDateString, dateFormat, new Date());
 		const lastCycleDate = parse(status.lastCycleDate, config.dateFormat, new Date());
 		var dayDiff = differenceInCalendarDays(today, lastCycleDate);
 		var days = Math.floor(dayDiff / cycleDays) * cycleDays;
 		nextDate = addDays(lastCycleDate, days);
 		aheadDate = addDays(nextDate, cycleDays);
 	} else {
-		const currentDate = startOfDay(new Date())
+		const currentDate = today;
 		nextDate = currentDate;
 		aheadDate = addDays(nextDate, cycleDays);
 	}
@@ -368,11 +374,12 @@ class GitOperations {
 
 		try {
 			const result = await command();
-			// logSuccess('Operation completed');
 			console.log("   ✅")
+			// logSuccess('Operation completed');
 			return { success: true, result };
 		} catch (error) {
-			console.error(`   ❌ ${error.message}`);
+			stdout.write(" - ❌ ${error.message}");
+			// console.error(`   ❌ ${error.message}`);
 			if (critical) exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, 'Critical operation failed - exiting');
 			return { success: false, error };
 		}
@@ -390,6 +397,13 @@ class GitOperations {
 			return null;
 		}
 	}
+	
+	async localBranchesExists(branch)
+	{
+		const localBranches = await this.simpleGit.branchLocal();
+		return localBranches.all.includes(branch);
+	}
+
 	async remoteBranchExists(branch) {
 		const remoteBranches = await this.simpleGit.raw([
 			'ls-remote', '--heads', this.config.remoteName, branch
@@ -448,11 +462,17 @@ class GitOperations {
 			critical
 		);
 	}
+	async fetch()
+	{
+		// console.log('fetch');
+		return await this.simpleGit.fetch();
+	}
+
 	async checkout(branch) {
 		return await this.simpleGit.checkout(branch);
 	}
 
-	async createBranch(fromBranch, newBranch, critical = true) {
+	async createBranch(message, fromBranch, newBranch, critical = true) {
 		if (await this.branchExists(newBranch)) {
 			logWarn(`Branch ${newBranch} already exists. Skipping creation.`);
 			return { success: true, existed: true };
@@ -467,7 +487,7 @@ class GitOperations {
 
 				// 為新分支創建一個空提交來確保它有獨立的歷史
 				// 這樣後續從這個分支創建其他分支就不會有問題
-				await this.simpleGit.commit('CICD Initial branch commit', ['--allow-empty']);
+				await this.simpleGit.commit(message, ['--allow-empty']);
 			},
 			`Creating branch ${newBranch} from ${fromBranch}`,
 			critical
@@ -529,6 +549,8 @@ class GitOperations {
 				} else {
 					this.evaluateGitResult(result);
 				}
+				// const result = await this.simpleGit.push(this.config.remoteName, branch, []);
+				// this.evaluateGitResult(result);
 			},
 			`Merging (${fromBranch}) → (${branch}) ${noFastForward ? '(with merge commit)' : ''}`,
 			critical
@@ -545,7 +567,7 @@ class GitOperations {
 			console.log("Everything up-to-date");
 		} else if (result.summary) {
 			if (result.summary.changes > 0) {
-				console.log(`changed ${result.summary.changes}`);
+				// console.log(`changed ${result.summary.changes}`);
 			} else if (result.summary.changes == 0) {
 				console.log("Everything up-to-date");
 			}
@@ -599,20 +621,22 @@ class GitOperations {
 	}
 }
 
-async function emptyCommit(git, config, gitDir, dryRun, statusPath, customDate = null) {
-	await git.checkout(config.baseBranch);
-	await git.emptyCommit("emptyCommit");
-	await git.push(config.baseBranch);
+async function emptyCommit(gitOp, config, gitDir, dryRun, statusPath, customDate = null) {
+	await gitOp.checkout(config.baseBranch);
+	await gitOp.emptyCommit("emptyCommit");
+	await gitOp.push(config.baseBranch);
 }
 
 // Initialize required date-based branches with strict error handling
-async function initializeBranches(git, config, gitDir, dryRun, statusPath, customDate = null) {
+async function initializeBranches(gitOp, config, gitDir, dryRun, statusPath, customDate = null) {
 	let status = await loadStatusFile(statusPath);
 	const currentDateString = customDate || getTodayString(config.dateFormat);
-	
+	// console.log("currentDateString", currentDateString, "customDate", customDate);
 	var dateInfo = calculateCycleDateInfo(config, status, currentDateString, config.cycleDays, config.dateFormat);
-	
+	// console.log("dateInfo", dateInfo);
+
 	var newBaseBranch = formatBranchName(config, dateInfo.current);
+	// console.log("what is the new branch?", newBaseBranch);
 	var proBranch = formatBranchName(config, "x1");
 	var preBranch = formatBranchName(config, "x2");
 
@@ -624,7 +648,7 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 	
 	status.lastCycleDate = dateInfo.current;
 	status.aheadCycleDate = dateInfo.next;
-
+	
 	var items = [
 		{
 			key:"base",
@@ -659,17 +683,16 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 	console.log(`=== Initializing Required Branches ===`);
 	console.log(`Using date: ${currentDateString}`);
 	console.log(`Git directory: ${gitDir || process.cwd()}`);
-	console.log(`Target branches:`, {
-		base: getBranchName(status.base),
-		uat: getBranchName(status.uat),
-		pre: getBranchName(status.pre),
-		pro: getBranchName(status.pro)
-	});
+	
+	console.log(`base(${config.baseBranch}) : ${status.base.branch}`)
+	console.log(`uat(${config.uatBranch}) : ${status.uat.branch}`)
+	console.log(`pre(${config.preBranch}) : ${status.pre.branch}`)
+	console.log(`pro(${config.proBranch}) : ${status.pro.branch}`)
 	
 	for (const item of items) {
-		var prevExists = item.prev ? await git.branchExists(item.prev) : false;
-		var currentExists = await git.branchExists(item.current);
-		var nextExists = await git.branchExists(item.next);
+		var prevExists = item.prev ? await gitOp.branchExists(item.prev) : false;
+		var currentExists = await gitOp.branchExists(item.current);
+		var nextExists = await gitOp.branchExists(item.next);
 		// console.log(prevExists, currentExists, nextExists);
 		if(!prevExists && !currentExists && !nextExists)
 			exitWithError(ERROR_CODES.MISSING_BRANCHES, `Source branch ${item.prev ? item.prev  : item.current} does not exist`);
@@ -678,10 +701,12 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 		if(prevExists && !currentExists && !nextExists)
 		{
 			toDoList.push({
+				key:item.key,
 				from:item.prev,
 				to:item.current
 			});
 			toDoList.push({
+				key:item.key,
 				from:item.current,
 				to:item.next
 			});
@@ -689,6 +714,7 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 		if(currentExists)
 		{
 			toDoList.push({
+				key:item.key,
 				from:item.current,
 				to:item.next
 			});
@@ -696,6 +722,7 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 		if(nextExists)
 		{
 			toDoList.push({
+				key:item.key,
 				from:item.next,
 				to:item.current
 			});
@@ -703,19 +730,19 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 
 		for (const item of toDoList) {
 			// await git.mergeBranches(item.from, item.to, true);
-			if (await git.branchExists(item.to)) {
-				const mergeResult = await git.merge(item.to, item.from, false, true);
+			if (await gitOp.branchExists(item.to)) {
+				const mergeResult = await gitOp.merge(item.to, item.from, false, true);
 				// console.log(mergeResult);
 				// if (mergeResult && mergeResult.success) {
 			} else {
-				const createResult = await git.createBranch(item.from, item.to);
+				const createResult = await gitOp.createBranch(`CICD Initial commit to ${item.to} key:${item.key}`, item.from, item.to);
 				
 				if (createResult.success && !dryRun) {
 					// Get latest commit info for the new branch
-					await git.checkout(item.from);
-					await git.emptyCommit("CICD Initial branch commit");
-					await git.checkout(item.from);
-					await git.push(item.to);
+					await gitOp.checkout(item.from);
+					await gitOp.emptyCommit("EmptyCommit");
+					await gitOp.checkout(item.from);
+					await gitOp.push(item.to);
 					
 				} else if (dryRun) {
 					logInfo(`[DRY RUN] Would create ${item.to} from ${item.from}`);
@@ -733,9 +760,9 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 	
 	for (const item of items) {
 		// console.log("__checkout ", item.current, "________");
-		await git.checkout(item.current);
+		await gitOp.checkout(item.current);
 		// console.log("get getLatestCommitInfo", item.current);
-		const commitInfo = await git.getLatestCommitInfo(item.current);
+		const commitInfo = await gitOp.getLatestCommitInfo(item.current);
 		if (commitInfo) {
 			// console.log("key", item.current, item.key, commitInfo.hash);
 			// Update status with commit info
@@ -750,7 +777,7 @@ async function initializeBranches(git, config, gitDir, dryRun, statusPath, custo
 }
 
 // Verify all required branches exist or exit
-async function verifyBranches(git, config, statusPath, gitDir, customDate = null) {
+async function verifyBranches(gitOp, config, statusPath, gitDir, customDate = null) {
 	let status = await loadStatusFile(statusPath) || {};
 	const currentDate = customDate || getTodayString(config.dateFormat);
 
@@ -776,7 +803,7 @@ async function verifyBranches(git, config, statusPath, gitDir, customDate = null
 	let missing = false;
 
 	for (const branch of requiredBranches) {
-		const exists = await git.branchExists(branch);
+		const exists = await gitOp.branchExists(branch);
 		if (exists) {
 			logValid(`${branch}`);
 		} else {
@@ -822,22 +849,31 @@ function sameCommitInfo(commitInfo1, commitInfo2)
 	if (commitInfo1.hash === commitInfo2.hash) return true;
 	return false;
 }
-async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, customDate = null) {
+async function mergeBranches(config, gitOp, currentDate, dryRun, status) {
+	await gitOp.fetch();
 	console.log("\n=== Merge or Rebase Branches ===");
 	logInfo(`${currentDate} Merge or Rebase Branches`);
-
+	
 	// await git.checkout(config.baseBranch);
-	await git.pull(config.baseBranch);
+	await gitOp.pull(config.baseBranch);
 
 	var items = [];
-	if (status.aheadCycleDate) {
-		var branch = formatBranchName(config, status.aheadCycleDate);
-		if (await git.remoteBranchExists(branch)) {
 			
+	if (status.aheadCycleDate) {
+		
+		var branch = formatBranchName(config, status.aheadCycleDate);
+		
+		if (await gitOp.remoteBranchExists(branch)) {
+			
+			if(!await gitOp.localBranchesExists(branch))
+			{
+				await gitOp.checkout(branch);
+			}
+
 			items.push(
 				{
 					type: "merge",
-					name: 'base',
+					name: `merge current base(${status.base.branch}) ➔ ahead (${branch})`,
 					key:"base",
 					ref:config.baseBranch,
 					commit: extractBranchLatestCommit(status.base),
@@ -847,11 +883,10 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 			);
 		}
 	}
-
 	items.push(
 		{
 			type: "merge",
-			name: 'base',
+			name: `merge base(${config.baseBranch}) → base target (${status.base.branch})`,
 			key: "base",
 			branchName:status.base.branch,
 			commit:status.base.commit,
@@ -860,7 +895,8 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 		},
 		{
 			type: "merge",
-			name: 'uat',
+			// name: 'uat',
+			name: `merge uat source(${status.uat.branch}) → uat(${config.uatBranch})`,
 			key: "uat",
 			branchName:status.uat.branch,
 			commit:status.uat.commit,
@@ -869,7 +905,8 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 		},
 		{
 			type: "merge",
-			name: 'pre',
+			// name: 'pre',
+			name: `merge pre source(${status.pre.branch}) → pre(${config.preBranch})`,
 			key: "pre",
 			branchName:status.pre.branch,
 			commit:status.pre.commit,
@@ -878,7 +915,8 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 		},
 		{
 			type: "merge",
-			name: 'pro',
+			// name: 'pro',
+			name: `merge pro source(${status.pro.branch}) → pre(${config.proBranch})`,
 			key: "pro",
 			branchName:status.pro.branch, // pro
 			commit:status.pro.commit,
@@ -889,18 +927,18 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 	var hasError = false;
 	for (const item of items) {
 		const { name, from, to, commit, branchName } = item;
-		logLine();
+		logLine(item.name);
 		if (item.type == "merge") {
 			// var latest = getLatestCommitInfo(item.latest);
-			const commitInfo = await git.getLatestCommitInfo(item.from);
-			console.log(name);
+			const commitInfo = await gitOp.getLatestCommitInfo(item.from);
+			// console.log(name);
 			if(sameCommitInfo(commitInfo, item.commit)) {
 				logInfo(`⏩ ${from} has not change ⏩`);
 			} else {
-				const mergeResult = await git.merge(to, from, false, false)
+				const mergeResult = await gitOp.merge(to, from, false, false)
 				if (mergeResult && mergeResult.success) {
-					// Update commit info after successful merge
-					const commitInfo = await git.getLatestCommitInfo(from);
+					await gitOp.push(to, false, false);
+					const commitInfo = await gitOp.getLatestCommitInfo(from);
 					if (commitInfo) {
 						status[item.key].commit = commitInfo;//  = updateBranchStatus(status[key], branchName, commitInfo);
 					}
@@ -922,16 +960,20 @@ async function mergeBranches(config, git, currentDate, gitDir, dryRun, status, c
 function logBranchInfo(status, branches) {
 	const { newBaseBranch, uatSourceBranch, proSourceBranch } = branches;
 	console.log(`=== Cycle Information ===`);
-	console.log(`base: (${getBranchName(status.base)}) → (${newBaseBranch})`);
-	console.log(`UAT: (${getBranchName(status.uat)}) → (${uatSourceBranch})`);
-	console.log(`PRO: (${getBranchName(status.pro)}) → (${proSourceBranch})`);
+	// console.log("branches", branches);
+	console.log(`base: swithcing target from (${getBranchName(status.base)}) to (${newBaseBranch})`);
+	console.log(`UAT: switch target from (${getBranchName(status.uat)}) to (${uatSourceBranch})`);
+	console.log(`PRO: switch target from (${getBranchName(status.pro)}) to (${proSourceBranch})`);
 }
 
-async function createBranches(config, git, currentDateString, gitDir, dryRun, status, customDate = null) {
+async function createBranches(config, gitOp, currentDateString, dryRun, status) {
 	// await git.checkout(config.baseBranch);
-	await git.pull(config.baseBranch);
+	await gitOp.fetch();
+	await gitOp.pull(config.baseBranch);
 
 	const branches = updateNextCycleBranches(config, status, currentDateString, config.cycleDays, config.branchPrefix, config.dateFormat);
+	// console.log("branches", branches);
+	
 	logBranchInfo(status, branches);
 	const { newBaseBranch, uatSourceBranch, proSourceBranch } = branches;
 
@@ -942,7 +984,7 @@ async function createBranches(config, git, currentDateString, gitDir, dryRun, st
 	];
 
 	for (const branch of requiredBranches) {
-		if (!await git.branchExists(branch)) {
+		if (!await gitOp.branchExists(branch)) {
 			exitWithError(ERROR_CODES.MISSING_BRANCHES, `Required branch ${branch} does not exist`);
 		}
 	}
@@ -954,69 +996,65 @@ async function createBranches(config, git, currentDateString, gitDir, dryRun, st
 		branch: newBaseBranch,
 		time: new Date().getTime()
 	});
-
-	if (await git.branchExists(newBaseBranch)) {
-		logInfo(`Base branch (${newBaseBranch}) already exists. Skipping creation.`);
-	} else {
-		const createResult = await git.createBranch(config.baseBranch, newBaseBranch);
-		if (!createResult.success) exitWithError(ERROR_CODES.GIT_OPERATION_FAILED, 'Failed to create new base branch');
-
-		// Get commit info for the new branch
-		const commitInfo = await git.getLatestCommitInfo(newBaseBranch);
-		await git.push(newBaseBranch);
-	}
-
+	var aheadBranchExists = await gitOp.remoteBranchExists(newBaseBranch);;
+	
 	// rebase or merege, reset, delete, git flow
 	var items = [
 		{
-			type:"merge",
-			name:"=== Merge Ahead base to Branch ===",
+			type:aheadBranchExists ? "merge" : "create",
+			name:"Merge Ahead base to Branch",
 			from:status.base.branch,
 			to:newBaseBranch,
 			noFastForward:false
 		},
 		{
-			type:"rebase",
-			name:'=== Updating UAT Branch ===',
-			from:newBaseBranch,
-			to:uatSourceBranch,
+			type:"merge",
+			name:'Updating UAT Branch',
+			from:uatSourceBranch,
+			to:config.uatBranch,
 			noFastForward:false,
 		},
 		{
-			type:"rebase",
-			name:'=== Updating PRE Branch ===',
+			type:"merge",
+			name:'Updating PRE Branch',
 			from:uatSourceBranch,
-			to:proSourceBranch,
+			to:config.preBranch,
 			noFastForward:true
 		},
 		{
-			type:"rebase", 
-			name:'=== Updating PRO Branch ===',
+			type:"merge", 
+			name:'Updating PRO Branch',
 			from:proSourceBranch,
 			to:config.proBranch,
 			noFastForward:true
 		}
 	];
 	for (const item of items) {
-		logLine();
-		console.log(item.name);
-		
-		if(item.type == "rebase")
+		logLine(item.name);
+		if(item.type == "create")
 		{
-			await git.rebase(item.to, item.from, true);
+			await gitOp.createBranch(`Creating new branch from ${item.from} to ${item.to}`, item.from, item.to, true);
+			await gitOp.push(item.to, false, false);
+
+		} else if(item.type == "rebase")
+		{
+			await gitOp.rebase(item.to, item.from, true);
+			await gitOp.push(item.to, false, false);
 		} else if(item.type == "merge")
 		{
-			await git.merge(item.to, item.from, true);
+			await gitOp.merge(item.to, item.from, true);
+			await gitOp.push(item.to, false, false);
 		} else if(item.type == "reset")
 		{
-			await git.reset(item.from, item.to, true);
+			await gitOp.reset(item.from, item.to, true);
+			await gitOp.push(item.to, false, false);
 		} else if(item.type == "delete")
 		{
 			// not implement	
-			await git.delete(item.to);
-			await git.push(item.to);
+			await gitOp.delete(item.to);
+			await gitOp.push(item.to);
 			// 
-			await git.createBranch(item.from, item.to);
+			await gitOp.createBranch('CICD Unknown branch commit', item.from, item.to);
 		}
 	}
 	/*
@@ -1037,16 +1075,16 @@ async function createBranches(config, git, currentDateString, gitDir, dryRun, st
 	*/
 	console.log('\n=== Updating State ===');
 	// Get latest commit info for all branches
-	const baseCommitInfo = await git.getLatestCommitInfo(newBaseBranch);
-	const uatCommitInfo = await git.getLatestCommitInfo(uatSourceBranch);
-	const proCommitInfo = await git.getLatestCommitInfo(proSourceBranch);
+	const baseCommitInfo = await gitOp.getLatestCommitInfo(newBaseBranch);
+	const uatCommitInfo = await gitOp.getLatestCommitInfo(uatSourceBranch);
+	const proCommitInfo = await gitOp.getLatestCommitInfo(proSourceBranch);
 
 	const newState = {
 		base: updateBranchStatus(status.base, newBaseBranch, baseCommitInfo),
 		uat: updateBranchStatus(status.uat, uatSourceBranch, uatCommitInfo),
 		pre: updateBranchStatus(status.pre, uatSourceBranch, uatCommitInfo),
 		pro: updateBranchStatus(status.pro, proSourceBranch, proCommitInfo),
-		nextCycleDate: branches.aheadCycleDate,
+		aheadCycleDate: branches.aheadCycleDate,
 		lastCycleDate: branches.nextCycleDate
 	};
 
@@ -1061,30 +1099,6 @@ function getTodayString(dateFormat) {
 	const date = new Date();
 	return format(date, dateFormat);
 }
-/*
-function logDataObject(name, obj) {
-	console.log(`${name}:`)
-	for (var key in obj) {
-		if (key === 'base' || key === 'uat' || key === 'pre' || key === 'pro') {
-			console.log(`    ${key}: ${getBranchName(obj[key])}`);
-			const latestCommit = extractBranchLatestCommit(obj[key]);
-			if (latestCommit) {
-				console.log(`      Latest commit: ${latestCommit.hash.substring(0, 8)} - ${latestCommit.message}`);
-			}
-		} else {
-			console.log(`    ${key}: ${obj[key]}`);
-		}
-	}
-}
-*/
-/*
-function logSummary(options, config, status, today, gitDir) {
-	console.log(`=== CI/CD Branch Management Tool ===`);
-	logDataObject("command line options", options);
-	logDataObject("config.json", config);
-	logDataObject("status.json", status);
-}
-*/
 
 async function removeOldBranches(config, status, git) {
 	if (config.autoRemoveBranches && status.branches) {
@@ -1122,8 +1136,8 @@ const commandHandlers = [
 		description: 'Empty Message Commit', 
 		handler: async (opts) => { 
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
-			await emptyCommit(git, config, config.git, opts.dryRun, opts.status, opts.date);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
+			await emptyCommit(gitOp, config, config.git, opts.dryRun, opts.status, opts.date);
 		}, 
 	},
 	{ 
@@ -1131,8 +1145,8 @@ const commandHandlers = [
 		description: 'Initialize required branches', 
 		handler: async (opts) => {
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
-			await initializeBranches(git, config, config.git, opts.dryRun, opts.status, opts.date);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
+			await initializeBranches(gitOp, config, config.git, opts.dryRun, opts.status, opts.date);
 		},
 	},
 	{ 
@@ -1140,8 +1154,8 @@ const commandHandlers = [
 		description: 'Verify all required branches exist', 
 		handler: async (opts) => {
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
-			await verifyBranches(git, config, opts.status, config.git, opts.date);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
+			await verifyBranches(gitOp, config, opts.status, config.git, opts.date);
 		}
 	},
 	{ 
@@ -1149,11 +1163,11 @@ const commandHandlers = [
 		description: 'Merge branches according to workflow', 
 		handler: async (opts) => {
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
 			const status = await loadStatusFile(opts.status);
 			const currentDate = opts.date || getTodayString(config.dateFormat);
-
-			await mergeBranches(config, git, currentDate, config.git, opts.dryRun, status, opts.date);
+				// mergeBranches(config, gitOp, currentDate, dryRun, status)
+			await mergeBranches(config, gitOp, currentDate, opts.dryRun, status);
 			await saveStatusFile(opts.status, status);
 		}
 	},
@@ -1162,7 +1176,7 @@ const commandHandlers = [
 		description: 'Execute complete workflow (create + merge)', 
 		handler: async (opts) => {
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
 			const status = await loadStatusFile(opts.status);
 			const currentDate = opts.date || getTodayString(config.dateFormat);
 
@@ -1171,10 +1185,17 @@ const commandHandlers = [
 			console.log(`Repository: ${config.git || process.cwd()}`);
 
 			if (isExecutionDay(config.dateFormat, currentDate, config.cycleDays, status.lastCycleDate)) {
-				await createBranches(config, git, currentDate, config.git, opts.dryRun, status, opts.date);
-				await removeOldBranches(config, status, git);
+				await createBranches(
+					config, gitOp, currentDate, 
+					// config.git, 
+					opts.dryRun, 
+					status
+				);
+				await mergeBranches(config, gitOp, currentDate, opts.dryRun, status);
+				await removeOldBranches(config, status, gitOp);
 			} else {
-				await mergeBranches(config, git, currentDate, config.git, opts.dryRun, status, opts.date);
+				   // mergeBranches(config, gitOp, currentDate, dryRun, status)
+				await mergeBranches(config, gitOp, currentDate, opts.dryRun, status);
 			}
 			await saveStatusFile(opts.status, status);
 			logSuccess('Workflow completed successfully!');
@@ -1185,7 +1206,7 @@ const commandHandlers = [
 		description: 'Execute complete workflow (create + merge)', 
 		handler: async (opts) => {
 			const config = await loadConfig(opts.config);
-			const git = new GitOperations(config, config.git, opts.dryRun);
+			const gitOp = new GitOperations(config, config.git, opts.dryRun);
 			const status = await loadStatusFile(opts.status);
 			const currentDate = opts.date || getTodayString(config.dateFormat);
 
@@ -1199,9 +1220,9 @@ const commandHandlers = [
 				logWarn(`Next cycle: ${calculateNextCycleDateString(status.lastCycleDate, config.cycleDays, config.dateFormat)}`);
 				return;
 			}
-
-			await createBranches(config, git, currentDate, config.git, opts.dryRun, status, opts.date);
-			await removeOldBranches(config, status, git);
+			// createBranches(config, gitOp, currentDateString, dryRun, status)
+			await createBranches(config, gitOp, currentDate, opts.dryRun, status);
+			await removeOldBranches(config, status, gitOp);
 			await saveStatusFile(opts.status, status);
 			logSuccess('Workflow completed successfully!');
 		}
@@ -1264,17 +1285,7 @@ function setupGlobalOptions() {
 }
 
 function registerCommands() {
-	/*
-	const commands = [
-		{ name: 'fake', description: 'Empty Message Commit', handler: commandHandlers.emptyCommit },
-		{ name: 'init', description: 'Initialize required branches', handler: commandHandlers.init },
-		{ name: 'verify', description: 'Verify all required branches exist', handler: commandHandlers.verify },
-		{ name: 'merge', description: 'Merge branches according to workflow', handler: commandHandlers.merge },
-		{ name: 'run', description: 'Execute complete workflow (create + merge)', handler: commandHandlers.run },
-		{ name: 'workflow', description: 'Execute complete workflow (create + merge)', handler: commandHandlers.workflow },
-		{ name: 'status', description: 'Show current status', handler: commandHandlers.status }
-	];
-	*/
+
 	commandHandlers.forEach(({ name, description, handler }) => {
 		program
 			.command(name)
