@@ -293,24 +293,26 @@ function updateNextCycleBranches(config, status, currentDateString, cycleDays = 
 		aheadDate = addDays(nextDate, cycleDays);
 	}
 
+	var newBranch = config.branchPrefix ? `${config.branchPrefix}/${format(nextDate, dateFormat)}` : format(nextDate, dateFormat);
 	var obj = {
 		aheadCycleDate: format(aheadDate, dateFormat),
 		nextCycleDate: format(nextDate, dateFormat),
-		newBaseBranch: config.branchPrefix ? `${config.branchPrefix}/${format(nextDate, dateFormat)}` : format(nextDate, dateFormat),
-		currentBranch: getBranchName(status.base),
-		uatSourceBranch: getBranchName(status.uat),
-		proSourceBranch: getBranchName(status.pro),
+		newBaseBranch: newBranch,
+		currentBranch: status.base.branch,
+		uatSourceBranch: newBranch,
+		preSourceBranch: status.pre.branch,
+		proSourceBranch: status.pro.branch,
 	}
 
-	if (obj.proSourceBranch != obj.uatSourceBranch) {
-		logInfo(`set pro to ${obj.uatSourceBranch}`);
-		obj.proSourceBranch = obj.uatSourceBranch;
+	if (obj.proSourceBranch != obj.preSourceBranch) {
+		logInfo(`set pro to ${obj.preSourceBranch}`);
+		obj.proSourceBranch = obj.preSourceBranch;
 	}
-	if (obj.uatSourceBranch != obj.currentBranch) {
+	if (obj.preSourceBranch != obj.currentBranch) {
 		// pre branch rebase to status.base
 		// set status.pre = status.base
 		logInfo(`set uat to ${obj.currentBranch}`)
-		obj.uatSourceBranch = obj.currentBranch;
+		obj.preSourceBranch = obj.currentBranch;
 	}
 	return obj;
 }
@@ -629,7 +631,7 @@ async function emptyCommit(gitOp, config, gitDir, dryRun, statusPath, customDate
 
 // Initialize required date-based branches with strict error handling
 async function initializeBranches(gitOp, config, gitDir, dryRun, statusPath, customDate = null) {
-	let status = await loadStatusFile(statusPath);
+	let status = normalizeStatusFormat({});
 	const currentDateString = customDate || getTodayString(config.dateFormat);
 	// console.log("currentDateString", currentDateString, "customDate", customDate);
 	var dateInfo = calculateCycleDateInfo(config, status, currentDateString, config.cycleDays, config.dateFormat);
@@ -642,7 +644,7 @@ async function initializeBranches(gitOp, config, gitDir, dryRun, statusPath, cus
 
 	
 	if (!status.base.branch) status.base.branch = newBaseBranch;
-	if (!status.uat.branch) status.uat.branch = preBranch;
+	if (!status.uat.branch) status.uat.branch = newBaseBranch;
 	if (!status.pre.branch) status.pre.branch = preBranch;
 	if (!status.pro.branch) status.pro.branch = proBranch;
 	
@@ -972,15 +974,14 @@ async function createBranches(config, gitOp, currentDateString, dryRun, status) 
 	await gitOp.pull(config.baseBranch);
 
 	const branches = updateNextCycleBranches(config, status, currentDateString, config.cycleDays, config.branchPrefix, config.dateFormat);
-	// console.log("branches", branches);
 	
-	logBranchInfo(status, branches);
-	const { newBaseBranch, uatSourceBranch, proSourceBranch } = branches;
+	
+	const { newBaseBranch, uatSourceBranch, preSourceBranch, proSourceBranch } = branches;
 
 	console.log('\n=== Verifying Required Branches ===');
 	const requiredBranches = [
 		config.baseBranch, config.uatBranch, config.preBranch, config.proBranch,
-		uatSourceBranch, proSourceBranch
+		preSourceBranch, proSourceBranch
 	];
 
 	for (const branch of requiredBranches) {
@@ -1017,9 +1018,9 @@ async function createBranches(config, gitOp, currentDateString, dryRun, status) 
 		{
 			type:"merge",
 			name:'Updating PRE Branch',
-			from:uatSourceBranch,
+			from:preSourceBranch,
 			to:config.preBranch,
-			noFastForward:true
+			noFastForward:true,
 		},
 		{
 			type:"merge", 
@@ -1077,12 +1078,14 @@ async function createBranches(config, gitOp, currentDateString, dryRun, status) 
 	// Get latest commit info for all branches
 	const baseCommitInfo = await gitOp.getLatestCommitInfo(newBaseBranch);
 	const uatCommitInfo = await gitOp.getLatestCommitInfo(uatSourceBranch);
+	const preCommitInfo = await gitOp.getLatestCommitInfo(preSourceBranch);
+	
 	const proCommitInfo = await gitOp.getLatestCommitInfo(proSourceBranch);
 
 	const newState = {
 		base: updateBranchStatus(status.base, newBaseBranch, baseCommitInfo),
 		uat: updateBranchStatus(status.uat, uatSourceBranch, uatCommitInfo),
-		pre: updateBranchStatus(status.pre, uatSourceBranch, uatCommitInfo),
+		pre: updateBranchStatus(status.pre, preSourceBranch, preCommitInfo),
 		pro: updateBranchStatus(status.pro, proSourceBranch, proCommitInfo),
 		aheadCycleDate: branches.aheadCycleDate,
 		lastCycleDate: branches.nextCycleDate
